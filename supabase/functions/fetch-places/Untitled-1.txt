@@ -1,0 +1,3 @@
+const { data, error } = await supabase.functions.invoke('fetch-places', {
+  body: {}
+});

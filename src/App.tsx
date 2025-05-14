@@ -1,5 +1,4 @@
-import React, { useEffect, useState } from 'react';
-import { Search, MapPin } from 'lucide-react';
+import { useEffect, useState, useCallback } from 'react';
 import Navbar from './components/Navbar';
 import BusinessCard from './components/BusinessCard';
 import { supabase } from './lib/supabase';
@@ -11,41 +10,17 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [location, setLocation] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    async function fetchData() {
-      try {
-        const [businessesResponse, categoriesResponse] = await Promise.all([
-          supabase
-            .from('businesses')
-            .select('*')
-            .order('created_at', { ascending: false })
-            .limit(6),
-          supabase.from('categories').select('*')
-        ]);
-
-        if (businessesResponse.error) throw businessesResponse.error;
-        if (categoriesResponse.error) throw categoriesResponse.error;
-
-        setBusinesses(businessesResponse.data);
-        setCategories(categoriesResponse.data);
-      } catch (error) {
-        console.error('Error fetching data:', error);
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    fetchData();
-  }, []);
-
-  const handleSearch = async () => {
+  const fetchBusinesses = useCallback(async (category?: string) => {
     setLoading(true);
     try {
       let query = supabase
         .from('businesses')
         .select('*')
-        .order('created_at', { ascending: false });
+        .order('rating', { ascending: false })
+        .limit(50);
 
       if (searchTerm) {
         query = query.ilike('name', `%${searchTerm}%`);
@@ -55,15 +30,47 @@ function App() {
         query = query.ilike('city', `%${location}%`);
       }
 
-      const { data, error } = await query.limit(6);
+      if (category) {
+        query = query.eq('category', category);
+      }
+
+      const { data, error } = await query;
 
       if (error) throw error;
       setBusinesses(data);
     } catch (error) {
-      console.error('Error searching businesses:', error);
+      console.error('Error fetching businesses:', error);
+      setError('Failed to load businesses. Please try again later.');
     } finally {
       setLoading(false);
     }
+  }, [searchTerm, location]);
+
+  useEffect(() => {
+    async function fetchData() {
+      setError(null);
+      try {
+        const categoriesResponse = await supabase.from('categories').select('*');
+        if (categoriesResponse.error) throw categoriesResponse.error;
+        setCategories(categoriesResponse.data || []);
+
+        await fetchBusinesses();
+      } catch (error) {
+        console.error('Error fetching data:', error);
+        setError('Failed to load businesses. Please try again later.');
+      }
+    }
+
+    fetchData();
+  }, [fetchBusinesses]);
+
+  const handleSearch = () => {
+    fetchBusinesses(selectedCategory || undefined);
+  };
+
+  const handleCategoryClick = async (categoryName: string) => {
+    setSelectedCategory(categoryName === selectedCategory ? null : categoryName);
+    await fetchBusinesses(categoryName === selectedCategory ? undefined : categoryName);
   };
 
   return (
@@ -102,14 +109,54 @@ function App() {
         </div>
       </div>
 
+      {/* Categories Section - Moved above Featured Businesses */}
+      <div className="bg-white py-8 shadow-sm">
+        <div className="container mx-auto px-4">
+          <h2 className="text-2xl font-bold mb-6">Browse by Category</h2>
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-4">
+            {categories.map((category) => (
+              <div
+                key={category.id}
+                onClick={() => handleCategoryClick(category.name)}
+                className={`p-4 rounded-lg transition cursor-pointer text-center ${
+                  selectedCategory === category.name
+                    ? 'bg-red-600 text-white'
+                    : 'bg-gray-50 hover:bg-gray-100'
+                }`}
+              >
+                <h3 className="text-lg font-semibold">{category.name}</h3>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
       {/* Featured Businesses */}
       <div className="container mx-auto px-4 py-12">
-        <h2 className="text-3xl font-bold mb-8">Popular in Ghana</h2>
-        {loading ? (
+        <h2 className="text-3xl font-bold mb-8">
+          {selectedCategory 
+            ? `Best ${selectedCategory} in Ghana`
+            : 'Popular in Ghana'}
+        </h2>
+        {error ? (
+          <div className="text-red-600 text-center p-4 bg-red-50 rounded-lg">
+            {error}
+          </div>
+        ) : loading ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {[...Array(6)].map((_, i) => (
-              <div key={i} className="bg-white rounded-lg shadow-md h-80 animate-pulse" />
+              <div key={i} className="bg-white rounded-lg shadow-md h-80 animate-pulse">
+                <div className="h-48 bg-gray-200 rounded-t-lg" />
+                <div className="p-4 space-y-3">
+                  <div className="h-4 bg-gray-200 rounded w-3/4" />
+                  <div className="h-4 bg-gray-200 rounded w-1/2" />
+                </div>
+              </div>
             ))}
+          </div>
+        ) : businesses.length === 0 ? (
+          <div className="text-center text-gray-600">
+            No businesses found. Try adjusting your search.
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -118,23 +165,6 @@ function App() {
             ))}
           </div>
         )}
-      </div>
-
-      {/* Categories Section */}
-      <div className="bg-white py-12">
-        <div className="container mx-auto px-4">
-          <h2 className="text-3xl font-bold mb-8">Browse by Category</h2>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            {categories.map((category) => (
-              <div key={category.id} className="bg-gray-50 p-6 rounded-lg hover:bg-gray-100 transition cursor-pointer">
-                <h3 className="text-lg font-semibold">{category.name}</h3>
-                {category.description && (
-                  <p className="text-gray-600 text-sm mt-1">{category.description}</p>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
       </div>
     </div>
   );
